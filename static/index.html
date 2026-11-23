@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Compare SPX and E-mini S&P 500 option volatility by forward moneyness.">
+  <title>SPX / ES Volatility Dashboard</title>
+  <link rel="stylesheet" href="./static/styles.css">
+  <script defer src="./static/dashboard.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand"><span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i></span><span>SPX <b>/</b> ES</span></div>
+      <nav aria-label="Dashboard sections"><a href="#comparison">Comparison</a><a href="#coverage">Coverage</a><a href="#diagnostics">Diagnostics</a></nav>
+      <button type="button" class="button small" id="reset">Load example</button>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="intro">
+      <div><h1>SPX / ES volatility comparison</h1>
+      <p>Match hourly option chains by settlement and forward moneyness.</p></div>
+      <div class="session" id="session"></div>
+    </div>
+
+    <section class="panel inputs">
+      <form id="upload">
+        <div class="section-head"><h2>Source files</h2><button class="button accent" id="upload-btn">Load files</button></div>
+        <div class="fields three">
+          <label class="file">SPX options <span id="spx-name">Parquet</span><input type="file" name="spx" accept=".parquet,.pq"></label>
+          <label class="file">ES options <span id="es-name">CSV</span><input type="file" name="es" accept=".csv,text/csv"></label>
+          <label class="file" title="Optional CSV headers: timestamp,futures_contract,price. Use timestamp offsets and the exact ES scheduled capture times.">ES futures <span id="future-name">Optional CSV</span><input type="file" name="futures" accept=".csv,text/csv"></label>
+        </div>
+      </form>
+      <form id="controls">
+        <div class="fields selection">
+          <label>ES contract<select name="es" id="es"></select></label>
+          <label>SPX series<select name="spx" id="spx"></select></label>
+          <label>Snapshot <span class="muted">(Chicago time)</span><select id="hour"></select></label>
+          <button class="button accent" id="compare-btn">Run comparison</button>
+        </div>
+        <p class="metadata" id="selection-note"></p>
+        <details id="settings">
+          <summary>Model settings</summary>
+          <div class="fields settings-grid">
+            <label>Timezone for naive SPX times<select name="spx_zone" id="zone">
+              <option value="America/Chicago">America/Chicago</option><option value="America/New_York">America/New_York</option><option value="UTC">UTC</option><option value="Asia/Kolkata">Asia/Kolkata</option>
+            </select></label>
+            <label>SPX expiry interpretation<select name="marker_mode" id="marker">
+              <option value="vendor">Vendor marker + 1 calendar day</option><option value="exact">Use raw timestamp (naive in New York)</option>
+            </select></label>
+            <label>Annual discount rate (%)<input type="number" name="rate" value="4.29" min="-10" max="30" step="any" required></label>
+            <label>Max strike bracket in log(K/F) (%)<input type="number" name="max_gap" value="2" min="0.0001" max="10" step="any" required></label>
+            <label>ES expiry override (CT)<input type="date" name="es_expiry"></label>
+            <label>ES expiry time (CT)<input type="time" name="es_clock"></label>
+            <label>SPX expiry override (ET)<input type="date" name="spx_expiry"></label>
+            <label>SPX expiry time (ET)<input type="time" name="spx_clock"></label>
+            <label>ES exercise style<select name="es_style"><option value="">From contract</option><option value="european">European · Black–76</option><option value="american">American · CRR futures tree</option></select></label>
+          </div>
+          <p class="metadata">Default rate uses the November 19, 2026 U.S. Treasury 2-month par yield as a flat, continuously compounded proxy. Set the rate for other dates. A futures CSV uses <code>timestamp,futures_contract,price</code> with offset-aware timestamps matching ES snapshot slots.</p>
+        </details>
+      </form>
+      <p id="message" class="message" role="status" aria-live="polite">Opening the example files…</p>
+    </section>
+
+    <div id="results" hidden>
+      <section id="comparison">
+        <div class="result-context"><div id="contracts"></div><span class="style-tag" id="pricing"></span></div>
+        <div class="notice" id="basis"></div>
+        <div class="metrics" id="metrics"></div>
+        <section class="panel chart-panel">
+          <div class="section-head chart-head"><div><h2>Volatility smile</h2><p class="metadata" id="smile-caption"></p></div>
+          <div class="legend"><span class="key spx">SPX surface</span><span class="key es">ES midpoint IV</span><span class="key band">ES bid–ask IV</span></div></div>
+          <canvas id="smile" class="smile" aria-label="SPX and ES implied volatility smile by log forward moneyness" role="img"></canvas>
+          <div class="chart-foot">
+            <div class="segmented" role="group" aria-label="Smile chart range"><button type="button" id="focus" aria-pressed="true">SPX overlap</button><button type="button" id="full" aria-pressed="false">Full ES chain</button></div>
+            <span id="hover-value" class="metadata"></span>
+          </div>
+        </section>
+      </section>
+
+      <section id="coverage" class="split">
+        <div class="panel data-panel">
+          <div class="section-head"><div><h2>Wing coverage</h2><p class="metadata">All hourly snapshots · buckets use log(K/F)</p></div></div>
+          <div class="scroll"><table><thead><tr><th>Moneyness</th><th>Matched</th><th>Median ΔIV</th><th>In spread</th></tr></thead><tbody id="wing-body"></tbody></table></div>
+        </div>
+        <div class="panel data-panel">
+          <div class="section-head"><div><h2>Hourly fit</h2><p class="metadata">Select a snapshot to inspect the strikes</p></div></div>
+          <div class="scroll"><table><thead><tr><th>Time (CT)</th><th>Matched</th><th>Median ΔIV</th><th>In spread</th></tr></thead><tbody id="hours-body"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="panel data-panel" id="strikes">
+        <div class="section-head"><div><h2>Strike comparison</h2><p class="metadata" id="strike-caption"></p></div><button class="button small" id="download" type="button">Export comparison CSV</button></div>
+        <div class="fields table-filters">
+          <label>ES strike and side<select id="strike"><option value="">All strikes</option></select></label>
+          <label>Coverage<select id="coverage-filter"><option value="matched">Matched only</option><option value="all">All ES quotes</option></select></label>
+        </div>
+        <p class="metadata" id="strike-detail" hidden></p>
+        <div class="scroll tall" tabindex="0" aria-label="Scrollable strike comparison table"><table><thead><tr><th>ES strike</th><th>Side</th><th>log(K/F)</th><th>ES bid / ask</th><th>ES IV</th><th>Mapped IV</th><th>ΔIV</th><th>Model price</th><th>Mid − model</th><th>SPX strikes</th><th>Result</th></tr></thead><tbody id="strike-body"></tbody></table></div>
+      </section>
+
+      <section id="diagnostics" class="panel data-panel">
+        <div class="section-head"><div><h2>Calculation diagnostics</h2><p class="metadata">Snapshot inputs, timing evidence and exclusions</p></div></div>
+        <div class="diagnostic-grid">
+          <div><h3>Selected snapshot</h3><dl id="hour-diagnostics"></dl></div>
+          <div><h3>Series and timing</h3><dl id="series-diagnostics"></dl></div>
+          <div><h3>Timezone check</h3><div class="scroll"><table><thead><tr><th>SPX clock</th><th>Overlap</th><th>Change RMSE</th></tr></thead><tbody id="timezone"></tbody></table></div>
+            <p class="metadata">RMSE compares consecutive hourly changes of the SPX feed’s reference level and ES parity proxy, in points. Smaller differences support an alignment hypothesis.</p></div>
+          <div><h3>Unmatched quotes</h3><dl id="exclusions"></dl></div>
+        </div>
+        <details class="method">
+          <summary>Method and sources</summary>
+          <ul>
+            <li>SPX forward is the median of K + exp(rT) × (call price − put price) for up to 11 near-forward strikes with positive call and put prices. Prices come from the Parquet's call_price and put_price fields. Their bid/ask and exchange quote times are unavailable.</li>
+            <li>SPX European IV uses the computed forward, the OTM quote at each strike and the Black–76 formula. ES IV is solved from its bid/ask midpoint. The dashboard also solves ES bid and ask IV with the same model.</li>
+            <li>Match exact snapshot instants and map by log(K/F). Interpolate linearly in SPX variance between bracketing strikes. The selected SPX IV is carried to ES maturity and repriced with ES time and the chosen futures price. For American exercise, add the early-exercise premium from a 400-step CRR futures tree to the Black–76 price.</li>
+            <li>Use year fractions of actual elapsed seconds divided by 365 days. Calendar DTE in the selectors is measured at the first ES snapshot for the selected contract, using exchange-local dates. Exact DTE appears in snapshot diagnostics. Raw SPX end-of-day markers in this feed are interpreted as the calendar day before settlement for recognized vendor series. Override the date and clock if your feed differs.</li>
+            <li>Positive ΔIV and mid − model mean ES is above the SPX-implied level. In spread means the model price falls within the ES bid and ask. Statistics use all matched strike-hours with equal weight per quote. The quoted spread and one session alone provide limited evidence about longer-run differences.</li>
+          </ul>
+          <div class="sources"><a href="https://www.cboe.com/tradable-products/sp-500/spx-options/spx-specifications/" target="_blank" rel="noreferrer">Cboe SPX specifications</a><a href="https://www.cboe.com/data/quotes/spx/options" target="_blank" rel="noreferrer">Cboe SPXW listings</a><a href="https://www.cmegroup.com/content/dam/cmegroup/rulebook/CME/IV/350/358A/358A.pdf" target="_blank" rel="noreferrer">CME rulebook 358A</a><a href="https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?field_tdr_date_value_month=202611&amp;type=daily_treasury_yield_curve" target="_blank" rel="noreferrer">U.S. Treasury yields</a><a href="https://doi.org/10.1016/0304-405X(76)90024-6" target="_blank" rel="noreferrer">Black (1976)</a></div>
+        </details>
+      </section>
+    </div>
+  </main>
+  <footer class="wrap">Local dashboard · Files are processed on this computer.</footer>
+</body>
+</html>

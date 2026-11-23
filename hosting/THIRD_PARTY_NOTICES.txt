@@ -1,0 +1,8 @@
+The dashboard uses the unmodified Pyodide v0.29.4 browser runtime under the
+Mozilla Public License 2.0. The corresponding source is available at
+https://github.com/pyodide/pyodide/tree/0.29.4.
+The license text is included as PYODIDE-LICENSE.txt.
+
+The Python packages are distributed as unmodified Pyodide wheels. The packages
+and checksums are listed in static/pyodide/pyodide-lock.json. Their upstream
+notices are included with their distributions.
